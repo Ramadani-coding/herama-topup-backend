@@ -145,3 +145,21 @@ exports.deleteCategory = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// Menghapus produk tunggal berdasarkan ID
+exports.deleteProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase.from("products").delete().eq("id", id);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: "Produk berhasil dihapus secara permanen.",
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
