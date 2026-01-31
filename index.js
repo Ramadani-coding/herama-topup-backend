@@ -13,6 +13,15 @@ app.use(express.json());
 // app.use('/api/v1/public', require('./routes/publicRoutes'));
 // app.use('/api/v1/payment', require('./routes/paymentRoutes'));
 
+// Endpoint untuk monitoring status server
+app.get("/health", (req, res) => {
+  res.json({
+    status: "UP",
+    timestamp: new Date().toISOString(),
+    message: "Herama Topup API is running smoothly",
+  });
+});
+
 app.get("/", (req, res) => {
   res.json({ message: "Game Topup API is ready!" });
 });
