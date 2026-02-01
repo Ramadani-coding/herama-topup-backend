@@ -9,10 +9,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Routes (Akan kita buat setelah ini)
-// app.use('/api/v1/public', require('./routes/publicRoutes'));
-// app.use('/api/v1/payment', require('./routes/paymentRoutes'));
-
 // Endpoint untuk monitoring status server
 app.get("/health", (req, res) => {
   res.json({
@@ -28,6 +24,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/v1/public", require("./routes/publicRoutes"));
 app.use("/api/v1/admin", require("./routes/adminRoutes"));
+app.use("/api/v1/payment", require("./routes/paymentRoutes"));
 
 app.get("/test-db", async (req, res) => {
   try {

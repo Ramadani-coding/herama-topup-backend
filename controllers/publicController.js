@@ -178,6 +178,49 @@ exports.processTopup = async (req, res) => {
   }
 };
 
+// Fungsi untuk mengecek status transaksi berdasarkan Ref ID (Invoice)
+exports.checkStatus = async (req, res) => {
+  const { ref_id } = req.params; // Mengambil ref_id dari URL
+
+  try {
+    // Mencari data di tabel transactions
+    const { data, error } = await supabase
+      .from("transactions")
+      .select(
+        "ref_id, customer_no, sku_code, amount_sell, status, payment_status, sn, created_at",
+      )
+      .eq("ref_id", ref_id)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({
+        success: false,
+        message: "Nomor invoice tidak ditemukan.",
+      });
+    }
+
+    // Mengembalikan data transaksi ke user
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoice: data.ref_id,
+        target: data.customer_no,
+        product: data.sku_code,
+        price: data.amount_sell,
+        paymentStatus: data.payment_status,
+        status: data.status, // pending, success, atau failed
+        sn: data.sn || "Dalam proses", // Serial Number dari Digiflazz [cite: 34]
+        date: data.created_at,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan sistem.",
+    });
+  }
+};
+
 exports.digiflazzWebhook = async (req, res) => {
   const signature = req.headers["x-hub-signature"]; // [cite: 66]
   const eventType = req.headers["x-digiflazz-event"]; // [cite: 66, 70]
