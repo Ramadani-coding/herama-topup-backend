@@ -1,4 +1,6 @@
 const supabase = require("../config/supabase");
+const { createDigiflazzTransaction } = require("../services/digiflazzService");
+const { generateInvoice, verifyWebhookSig } = require("../utils/helpers");
 
 // 1. Ambil list game untuk Beranda
 exports.getCategories = async (req, res) => {
@@ -93,5 +95,131 @@ exports.searchCategories = async (req, res) => {
     res.json({ success: true, message: "Hasil pencarian ditemukan", data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Topup
+exports.processTopup = async (req, res) => {
+  const { sku_code, customer_no, phone_number, server_id } = req.body;
+
+  if (!sku_code || !customer_no || !phone_number) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Data tidak lengkap" });
+  }
+
+  try {
+    const { data: product, error: pError } = await supabase
+      .from("products")
+      .select("price_sell")
+      .eq("sku_code", sku_code)
+      .single();
+
+    if (pError || !product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Produk tidak ditemukan" });
+    }
+
+    const invoice = generateInvoice();
+
+    // 1. Simpan Transaksi Awal (Pending)
+    const { error: dbError } = await supabase.from("transactions").insert([
+      {
+        ref_id: invoice,
+        customer_no,
+        server_id: server_id || null,
+        sku_code,
+        amount_sell: product.price_sell,
+        phone_number,
+        status: "pending",
+      },
+    ]);
+
+    if (dbError) throw dbError;
+
+    // 2. Tembak API Digiflazz
+    const digiResponse = await createDigiflazzTransaction(
+      sku_code,
+      customer_no,
+      invoice,
+    );
+
+    // 3. Update Database dengan data lengkap dari Digiflazz
+    await supabase
+      .from("transactions")
+      .update({
+        status: digiResponse.status.toLowerCase(),
+        sn: digiResponse.sn || null,
+        message: digiResponse.message,
+        amount_cost: digiResponse.price,
+        digiflazz_ref_id: digiResponse.ref_id,
+      })
+      .eq("ref_id", invoice);
+
+    // 4. Kirim Respon Lengkap (Sesuai Gambar Referensi)
+    return res.status(200).json({
+      success: true,
+      data: {
+        ref_id: invoice, // Nomor Invoice Internal
+        customer_no: digiResponse.customer_no, // Nomor Pelanggan
+        buyer_sku_code: digiResponse.buyer_sku_code, // Kode Produk
+        message: digiResponse.message, // Pesan Status
+        status: digiResponse.status, // Status Transaksi
+        rc: digiResponse.rc, // Response Code
+        sn: digiResponse.sn || "", // Serial Number
+        buyer_last_saldo: digiResponse.buyer_last_saldo, // Sisa Saldo
+        price: product.price_sell, // Harga Jual ke User
+      },
+    });
+  } catch (error) {
+    const errorMessage = error.response?.data?.data?.message || error.message;
+    return res.status(500).json({ success: false, message: errorMessage });
+  }
+};
+
+exports.digiflazzWebhook = async (req, res) => {
+  const signature = req.headers["x-hub-signature"]; // [cite: 66]
+  const eventType = req.headers["x-digiflazz-event"]; // [cite: 66, 70]
+  const payload = req.body; // [cite: 60, 87]
+
+  try {
+    // 1. Validasi Signature (Keamanan Utama)
+    if (
+      process.env.DIGIFLAZZ_WEBHOOK_SECRET &&
+      !verifyWebhookSig(payload, signature)
+    ) {
+      console.error("Webhook Error: Invalid Signature");
+      return res.status(401).send("Unauthorized"); // Tolak jika signature salah [cite: 152]
+    }
+
+    const { data } = payload; // [cite: 88, 112]
+    if (!data) return res.status(400).send("No Data");
+
+    console.log(`Menerima Event ${eventType} untuk Invoice: ${data.ref_id}`);
+
+    // 2. Update status transaksi di Supabase secara Realtime [cite: 61]
+    // Kita update berdasarkan ref_id yang dikirim Digiflazz [cite: 89, 113]
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        status: data.status.toLowerCase(), // Sukses, Pending, atau Gagal [cite: 93, 119]
+        sn: data.sn || "", // Serial Number sebagai bukti [cite: 96, 121]
+        message: data.message, // Pesan status [cite: 92, 118]
+        amount_cost: data.price, // Harga modal asli [cite: 97, 124]
+        updated_at: new Date().toISOString(), //
+      })
+      .eq("ref_id", data.ref_id); //
+
+    if (error) {
+      console.error("Database Update Error:", error.message);
+      return res.status(500).send("Database Error");
+    }
+
+    // 3. Respon ke Digiflazz bahwa webhook berhasil diterima
+    return res.status(200).send("Webhook Processed Successfully");
+  } catch (error) {
+    console.error("Webhook Processing Error:", error.message);
+    return res.status(500).send("Internal Server Error");
   }
 };
