@@ -359,10 +359,8 @@ exports.getRecentTransactions = async (req, res) => {
 
 exports.getPriceList = async (req, res) => {
   try {
-    // Mengambil filter category_id dari query string (URL)
     const { category_id } = req.query;
 
-    // 1. Inisialisasi query dasar dengan Join ke tabel categories
     let query = supabase
       .from("products")
       .select(
@@ -374,32 +372,26 @@ exports.getPriceList = async (req, res) => {
         categories (name)
       `,
       )
-      .order("product_name", { ascending: true });
+      // MENGURUTKAN HARGA: termurah ke termahal
+      .order("price_sell", { ascending: true });
 
-    // 2. Logika Backend Filtering
-    // Jika user memilih kategori spesifik (bukan "Semua")
     if (category_id && category_id !== "all") {
       query = query.eq("category_id", category_id);
     }
 
     const { data, error } = await query;
-
     if (error) throw error;
 
-    // 3. Transformasi data agar rapi di tabel frontend
     const formattedData = data.map((item, index) => ({
       no: index + 1,
       id: item.sku_code,
-      produk: item.categories?.name || "Game", // Diambil dari join categories
-      varian: item.product_name, // Contoh: "Free Fire 5 Diamond"
+      produk: item.categories?.name || "Game",
+      varian: item.product_name,
       harga: item.price_sell,
       status: item.status === "active" ? "Aktif" : "Nonaktif",
     }));
 
-    return res.status(200).json({
-      success: true,
-      data: formattedData,
-    });
+    return res.status(200).json({ success: true, data: formattedData });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
