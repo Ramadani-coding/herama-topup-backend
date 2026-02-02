@@ -302,3 +302,105 @@ exports.digiflazzWebhook = async (req, res) => {
     return res.status(500).send("Internal Server Error");
   }
 };
+
+// Fungsi untuk menyensor Order ID (Contoh: HRM-804104-INV -> HRM-80****NV)
+const maskInvoiceId = (id) => {
+  if (!id) return "";
+  const firstPart = id.substring(0, 3);
+  const lastPart = id.substring(id.length - 1);
+  return `${firstPart}********${lastPart}`; // Hasil akhir mirip referensi
+};
+
+exports.getRecentTransactions = async (req, res) => {
+  try {
+    // 1. Ambil 10 transaksi terakhir dari tabel
+    const { data: transactions, error: txError } = await supabase
+      .from("transactions")
+      .select("created_at, ref_id, amount_sell, status, sku_code")
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (txError) throw txError;
+
+    // 2. Kumpulkan semua sku_code unik yang ada di 10 transaksi tersebut
+    const uniqueSkuCodes = [...new Set(transactions.map((t) => t.sku_code))];
+
+    // 3. Cari data produk berdasarkan sku_code tersebut (Tanpa Relasi Formal)
+    const { data: products, error: prodError } = await supabase
+      .from("products")
+      .select("sku_code, product_name")
+      .in("sku_code", uniqueSkuCodes);
+
+    if (prodError) throw prodError;
+
+    // 4. Buat objek pencarian (Map) agar proses pencocokan lebih cepat
+    const productLookup = {};
+    products.forEach((p) => {
+      productLookup[p.sku_code] = p.product_name;
+    });
+
+    // 5. Gabungkan data dan lakukan sensor
+    const formattedData = transactions.map((item) => ({
+      tanggal: item.created_at,
+      order_id: maskInvoiceId(item.ref_id), // Sensor diaktifkan
+      produk: productLookup[item.sku_code] || item.sku_code, // Pakai sku_code jika nama tidak ketemu
+      harga: item.amount_sell,
+      status: item.status,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: formattedData,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getPriceList = async (req, res) => {
+  try {
+    // Mengambil filter category_id dari query string (URL)
+    const { category_id } = req.query;
+
+    // 1. Inisialisasi query dasar dengan Join ke tabel categories
+    let query = supabase
+      .from("products")
+      .select(
+        `
+        sku_code,
+        product_name,
+        price_sell,
+        status,
+        categories (name)
+      `,
+      )
+      .order("product_name", { ascending: true });
+
+    // 2. Logika Backend Filtering
+    // Jika user memilih kategori spesifik (bukan "Semua")
+    if (category_id && category_id !== "all") {
+      query = query.eq("category_id", category_id);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    // 3. Transformasi data agar rapi di tabel frontend
+    const formattedData = data.map((item, index) => ({
+      no: index + 1,
+      id: item.sku_code,
+      produk: item.categories?.name || "Game", // Diambil dari join categories
+      varian: item.product_name, // Contoh: "Free Fire 5 Diamond"
+      harga: item.price_sell,
+      status: item.status === "active" ? "Aktif" : "Nonaktif",
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: formattedData,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

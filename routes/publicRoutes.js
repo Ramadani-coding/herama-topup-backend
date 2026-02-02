@@ -10,4 +10,7 @@ router.post("/transaction", publicCtrl.processTopup);
 router.get("/transaction/:ref_id", publicCtrl.checkStatus);
 router.post("/webhook/digiflazz", publicCtrl.digiflazzWebhook);
 
+router.get("/recent-transactions", publicCtrl.getRecentTransactions);
+router.get("/price-list", publicCtrl.getPriceList);
+
 module.exports = router;
