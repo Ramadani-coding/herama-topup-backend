@@ -243,6 +243,7 @@ exports.checkStatus = async (req, res) => {
         payment_status: transaction.payment_status,
         sn: transaction.sn || "-",
         message: transaction.status || "-",
+        snap_token: transaction.snap_token,
         created_at: transaction.created_at,
       },
     });
