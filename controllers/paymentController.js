@@ -2,6 +2,7 @@ const snap = require("../config/midtrans");
 const supabase = require("../config/supabase");
 const { createDigiflazzTransaction } = require("../services/digiflazzService");
 const { generateInvoice } = require("../utils/helpers");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 exports.createPayment = async (req, res) => {
   const { sku_code, customer_no, phone_number, payment_method, amount } =
@@ -152,4 +153,53 @@ exports.handleNotification = async (req, res) => {
     console.error("Webhook Payment Error:", error.message);
     return res.status(500).send("Internal Server Error");
   }
+};
+
+exports.checkNickname = async (req, res) => {
+  const { sku_code, customer_no } = req.body;
+  const ref_id = `CHK-${Date.now()}`; // Gunakan satu ref_id yang sama untuk pengecekan ini
+
+  try {
+    let nickname = "Transaksi Pending";
+    let isFinished = false;
+    let attempts = 0;
+
+    // Lakukan pengulangan (Polling) maksimal 5 kali
+    while (!isFinished && attempts < 5) {
+      const response = await createDigiflazzTransaction(
+        sku_code,
+        customer_no,
+        ref_id,
+      );
+
+      if (response.status.toLowerCase() === "sukses") {
+        // Jika sukses, ambil Nickname dari SN dan hentikan loop
+        nickname = parseNickname(response.sn);
+        isFinished = true;
+      } else if (response.status.toLowerCase() === "gagal") {
+        return res
+          .status(400)
+          .json({ success: false, message: response.message });
+      } else {
+        // Jika masih pending, tunggu 2 detik sebelum coba lagi
+        attempts++;
+        await sleep(2000);
+      }
+    }
+
+    return res.status(200).json({ success: true, nickname });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const parseNickname = (sn) => {
+  if (!sn) return "Nickname tidak ditemukan";
+  // Contoh SN: "User ID 68899855 Zone 2123 / Username Nara / Region = ID"
+  // Kita ambil teks setelah "Username "
+  const parts = sn.split("Username ");
+  if (parts.length > 1) {
+    return parts[1].split(" /")[0]; // Mengambil "Nara"
+  }
+  return sn;
 };
