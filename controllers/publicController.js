@@ -180,40 +180,74 @@ exports.processTopup = async (req, res) => {
 
 // Fungsi untuk mengecek status transaksi berdasarkan Ref ID (Invoice)
 exports.checkStatus = async (req, res) => {
-  const { ref_id } = req.params; // Mengambil ref_id dari URL
+  const { ref_id } = req.params;
 
   try {
-    // Mencari data di tabel transactions
-    const { data, error } = await supabase
+    // 1. Ambil data utama dari tabel transactions
+    const { data: transaction, error: txError } = await supabase
       .from("transactions")
-      .select(
-        "ref_id, customer_no, sku_code, amount_sell, status, payment_status, sn, created_at",
-      )
+      .select("*")
       .eq("ref_id", ref_id)
       .single();
 
-    if (error || !data) {
+    if (txError || !transaction) {
       return res.status(404).json({
         success: false,
         message: "Nomor invoice tidak ditemukan.",
       });
     }
 
-    // Mengembalikan data transaksi ke user
+    // 2. Ambil detail produk dari tabel products
+    const { data: product } = await supabase
+      .from("products")
+      .select("product_name, category_id, price_sell")
+      .eq("sku_code", transaction.sku_code)
+      .single();
+
+    // 3. Ambil detail kategori dari tabel categories
+    const { data: category } = await supabase
+      .from("categories")
+      .select("name, image_url")
+      .eq("id", product?.category_id)
+      .single();
+
+    // 4. Logika Perhitungan Fee
+    const basePrice = product?.price_sell || transaction.amount_sell;
+    let fee = 0;
+    const method = transaction.payment_method.toLowerCase();
+
+    if (method === "qris") {
+      fee = Math.ceil(basePrice * 0.007); // Fee QRIS 0.7%
+    } else if (method === "gopay") {
+      fee = Math.ceil(basePrice * 0.002); // Fee E-Wallet 0.2%
+    } else if (method.includes("va") || method.includes("bank")) {
+      fee = 4000; // Fee Virtual Bank Flat 4.000
+    }
+
+    const totalPrice = basePrice + fee;
+
+    // 5. Mengembalikan respon lengkap sesuai referensi Postman
     return res.status(200).json({
       success: true,
       data: {
-        invoice: data.ref_id,
-        target: data.customer_no,
-        product: data.sku_code,
-        price: data.amount_sell,
-        paymentStatus: data.payment_status,
-        status: data.status, // pending, success, atau failed
-        sn: data.sn || "Dalam proses", // Serial Number dari Digiflazz [cite: 34]
-        date: data.created_at,
+        invoice_id: transaction.ref_id,
+        customer_no: transaction.customer_no,
+        product_name: product?.product_name || transaction.sku_code,
+        category_name: category?.name || "Game",
+        category_image: category?.image_url,
+        payment_method: transaction.payment_method,
+        price: basePrice,
+        fee: fee,
+        total_price: totalPrice,
+        status: transaction.status,
+        payment_status: transaction.payment_status,
+        sn: transaction.sn || "-",
+        message: transaction.status || "-",
+        created_at: transaction.created_at,
       },
     });
   } catch (error) {
+    console.error("Internal Error:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan sistem.",

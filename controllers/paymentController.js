@@ -195,11 +195,9 @@ exports.checkNickname = async (req, res) => {
 
 const parseNickname = (sn) => {
   if (!sn) return "Nickname tidak ditemukan";
-  // Contoh SN: "User ID 68899855 Zone 2123 / Username Nara / Region = ID"
-  // Kita ambil teks setelah "Username "
   const parts = sn.split("Username ");
   if (parts.length > 1) {
-    return parts[1].split(" /")[0]; // Mengambil "Nara"
+    return parts[1].split(" /")[0];
   }
   return sn;
 };
