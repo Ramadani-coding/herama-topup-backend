@@ -217,9 +217,9 @@ exports.checkStatus = async (req, res) => {
     const method = transaction.payment_method.toLowerCase();
 
     if (method === "qris") {
-      fee = Math.ceil(basePrice * 0.007); // Fee QRIS 0.7%
+      fee = 0; // Fee QRIS 0.7%
     } else if (method === "gopay") {
-      fee = Math.ceil(basePrice * 0.002); // Fee E-Wallet 0.2%
+      fee = Math.ceil(basePrice * 0.02); // Fee E-Wallet 0.2%
     } else if (method.includes("va") || method.includes("bank")) {
       fee = 4000; // Fee Virtual Bank Flat 4.000
     }
