@@ -1,4 +1,6 @@
+const axios = require("axios");
 const snap = require("../config/midtrans");
+const crypto = require("crypto");
 const supabase = require("../config/supabase");
 const { createDigiflazzTransaction } = require("../services/digiflazzService");
 const { generateInvoice } = require("../utils/helpers");
@@ -7,33 +9,72 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 exports.createPayment = async (req, res) => {
   const { sku_code, customer_no, phone_number, payment_method, amount } =
     req.body;
+  const username = process.env.DIGIFLAZZ_USERNAME;
+  const apiKey = process.env.DIGIFLAZZ_API_KEY;
+  const sign = crypto
+    .createHash("md5")
+    .update(username + apiKey + "depo")
+    .digest("hex");
 
   try {
+    // 1. AMBIL HARGA MODAL DARI DATABASE
+    const { data: product, error: prodError } = await supabase
+      .from("products")
+      .select("price_cost, product_name")
+      .eq("sku_code", sku_code)
+      .single();
+
+    if (prodError || !product) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Produk tidak ditemukan." });
+    }
+
+    // 2. CEK SALDO DIGIFLAZZ ANDA SECARA REAL-TIME
+    // Ganti URL, username, dan key dengan kredensial Digiflazz Anda
+    const digiRes = await axios.post("https://api.digiflazz.com/v1/cek-saldo", {
+      cmd: "deposit",
+      username: username,
+      sign: sign,
+    });
+
+    const myDeposit = digiRes.data.data.deposit;
+
+    // 3. LOGIKA PROTEKSI: BANDINGKAN SALDO VS HARGA MODAL
+    if (myDeposit < product.price_cost) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Maaf, stok produk sedang habis atau sistem sedang maintenance. Mohon coba lagi nanti.",
+      });
+    }
+
+    // --- JIKA SALDO CUKUP, BARU LANJUTKAN KE PROSES BERIKUTNYA ---
+
     const invoice = generateInvoice();
 
     let parameter = {
       transaction_details: {
         order_id: invoice,
-        gross_amount: amount, // Gunakan amount yang sudah termasuk fee dari frontend
+        gross_amount: amount,
       },
       customer_details: {
         phone: phone_number,
       },
-      // INI KUNCINYA: Membatasi agar langsung ke metode yang dipilih
       enabled_payments: [payment_method],
       item_details: [
         {
           id: sku_code,
           price: amount,
           quantity: 1,
-          name: `Top Up ${sku_code}`,
+          name: product.product_name, // Menggunakan nama asli produk
         },
       ],
     };
 
     const transaction = await snap.createTransaction(parameter);
 
-    // Simpan ke DB
+    // Simpan ke DB (Status tetap pending menunggu pembayaran user)
     await supabase.from("transactions").insert([
       {
         ref_id: invoice,
@@ -41,7 +82,7 @@ exports.createPayment = async (req, res) => {
         sku_code,
         amount_sell: amount,
         phone_number,
-        payment_method, // Simpan metode pembayaran
+        payment_method,
         status: "pending",
         payment_status: "pending",
         snap_token: transaction.token,
