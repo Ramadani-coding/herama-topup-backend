@@ -218,6 +218,23 @@ exports.checkStatus = async (req, res) => {
     const totalPrice = transaction.total_amount || basePrice + savedFee;
     // -------------------------------------------------------------------
 
+    // --- PROSES PEMBERSIHAN PESAN/NICKNAME MULTI-FORMAT ---
+    const rawSn = transaction.sn || "-";
+    let cleanNickname = rawSn;
+
+    // 1. Logika untuk Game (Pemisah Titik)
+    if (cleanNickname.includes(" . ")) {
+      cleanNickname = cleanNickname.split(" . ")[0];
+    } else if (cleanNickname.includes(".")) {
+      cleanNickname = cleanNickname.split(".")[0];
+    }
+
+    // 2. Logika untuk DANA/E-Money (Pemisah Garis Miring)
+    // Menghapus "DNID " dan mengambil teks sebelum tanda "/" pertama
+    if (cleanNickname.startsWith("DNID ")) {
+      cleanNickname = cleanNickname.replace("DNID ", "").split("/")[0];
+    }
+
     // 5. Mengembalikan respon lengkap sesuai referensi Postman
     return res.status(200).json({
       success: true,
@@ -233,7 +250,7 @@ exports.checkStatus = async (req, res) => {
         total_price: totalPrice, // Total asli yang dibayar
         status: transaction.status,
         payment_status: transaction.payment_status,
-        sn: transaction.sn || "-",
+        sn: cleanNickname.trim() || "-",
         message: transaction.status || "-",
         desc: transaction.message || "-",
         snap_token: transaction.snap_token,
