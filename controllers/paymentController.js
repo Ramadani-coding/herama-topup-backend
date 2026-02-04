@@ -9,6 +9,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 exports.createPayment = async (req, res) => {
   const { sku_code, customer_no, phone_number, payment_method, amount } =
     req.body;
+
+  // 1. DETEKSI PERANGKAT VIA HEADER
+  const userAgent = req.headers["user-agent"] || "";
+  const isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      userAgent,
+    );
+
   const username = process.env.DIGIFLAZZ_USERNAME;
   const apiKey = process.env.DIGIFLAZZ_API_KEY;
   const sign = crypto
@@ -17,10 +25,10 @@ exports.createPayment = async (req, res) => {
     .digest("hex");
 
   try {
-    // 1. AMBIL HARGA MODAL DARI DATABASE
+    // 1. AMBIL DATA PRODUK DARI DATABASE
     const { data: product, error: prodError } = await supabase
       .from("products")
-      .select("price_cost, product_name")
+      .select("price_cost, price_sell, product_name")
       .eq("sku_code", sku_code)
       .single();
 
@@ -30,18 +38,33 @@ exports.createPayment = async (req, res) => {
         .json({ success: false, message: "Produk tidak ditemukan." });
     }
 
-    // 2. CEK SALDO DIGIFLAZZ ANDA SECARA REAL-TIME
-    // Ganti URL, username, dan key dengan kredensial Digiflazz Anda
+    const costPrice = product.price_cost;
+    const basePrice = product.price_sell;
+
+    // 2. LOGIKA PERHITUNGAN FEE DINAMIS
+    let fee = 0;
+    const method = payment_method.toLowerCase();
+
+    if (method === "gopay") {
+      fee = isMobile ? Math.ceil(basePrice * 0.02) : 0;
+    } else if (
+      method.includes("va") ||
+      method.includes("bank") ||
+      method.includes("echannel")
+    ) {
+      fee = 4000;
+    }
+
+    const totalAmount = basePrice + fee;
+
+    // 3. CEK SALDO DIGIFLAZZ
     const digiRes = await axios.post("https://api.digiflazz.com/v1/cek-saldo", {
       cmd: "deposit",
       username: username,
       sign: sign,
     });
 
-    const myDeposit = digiRes.data.data.deposit;
-
-    // 3. LOGIKA PROTEKSI: BANDINGKAN SALDO VS HARGA MODAL
-    if (myDeposit < product.price_cost) {
+    if (digiRes.data.data.deposit < costPrice) {
       return res.status(400).json({
         success: false,
         message:
@@ -49,38 +72,34 @@ exports.createPayment = async (req, res) => {
       });
     }
 
-    // --- JIKA SALDO CUKUP, BARU LANJUTKAN KE PROSES BERIKUTNYA ---
-
     const invoice = generateInvoice();
 
+    // 4. KONFIGURASI MIDTRANS
     let parameter = {
-      transaction_details: {
-        order_id: invoice,
-        gross_amount: amount,
-      },
-      customer_details: {
-        phone: phone_number,
-      },
+      transaction_details: { order_id: invoice, gross_amount: totalAmount },
+      customer_details: { phone: phone_number },
       enabled_payments: [payment_method],
       item_details: [
         {
           id: sku_code,
-          price: amount,
+          price: totalAmount,
           quantity: 1,
-          name: product.product_name, // Menggunakan nama asli produk
+          name: product.product_name,
         },
       ],
     };
 
     const transaction = await snap.createTransaction(parameter);
 
-    // Simpan ke DB (Status tetap pending menunggu pembayaran user)
-    await supabase.from("transactions").insert([
+    // 5. SIMPAN KE DATABASE (FIX: Tangkap variabel insertError di sini)
+    const { error: insertError } = await supabase.from("transactions").insert([
       {
         ref_id: invoice,
         customer_no,
         sku_code,
-        amount_sell: amount,
+        amount_sell: basePrice,
+        amount_cost: costPrice,
+        fee: fee,
         phone_number,
         payment_method,
         status: "pending",
@@ -89,11 +108,18 @@ exports.createPayment = async (req, res) => {
       },
     ]);
 
+    // Sekarang variabel insertError sudah terdefinisi
+    if (insertError) {
+      console.error("Database Insert Error:", insertError);
+      throw new Error("Gagal menyimpan data transaksi ke database.");
+    }
+
     return res.status(200).json({
       success: true,
       data: { invoice, snap_token: transaction.token },
     });
   } catch (error) {
+    console.error("Internal Error:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 };

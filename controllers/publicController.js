@@ -197,34 +197,26 @@ exports.checkStatus = async (req, res) => {
       });
     }
 
-    // 2. Ambil detail produk dari tabel products
+    // 2. Ambil detail produk (Tetap dipertahankan untuk Nama Produk)
     const { data: product } = await supabase
       .from("products")
-      .select("product_name, category_id, price_sell")
+      .select("product_name, category_id")
       .eq("sku_code", transaction.sku_code)
       .single();
 
-    // 3. Ambil detail kategori dari tabel categories
+    // 3. Ambil detail kategori (Tetap dipertahankan untuk Gambar Kategori)
     const { data: category } = await supabase
       .from("categories")
       .select("name, image_url")
       .eq("id", product?.category_id)
       .single();
 
-    // 4. Logika Perhitungan Fee
-    const basePrice = product?.price_sell || transaction.amount_sell;
-    let fee = 0;
-    const method = transaction.payment_method.toLowerCase();
-
-    if (method === "qris") {
-      fee = 0; // Fee QRIS 0.7%
-    } else if (method === "gopay") {
-      fee = Math.ceil(basePrice * 0.02); // Fee E-Wallet 0.2%
-    } else if (method.includes("va") || method.includes("bank")) {
-      fee = 4000; // Fee Virtual Bank Flat 4.000
-    }
-
-    const totalPrice = basePrice + fee;
+    // --- PERBAIKAN: GUNAKAN DATA DARI DATABASE (JANGAN DIHITUNG ULANG) ---
+    // Kita ambil harga dan fee asli yang tersimpan saat checkout
+    const basePrice = transaction.amount_sell;
+    const savedFee = transaction.fee || 0;
+    const totalPrice = transaction.total_amount || basePrice + savedFee;
+    // -------------------------------------------------------------------
 
     // 5. Mengembalikan respon lengkap sesuai referensi Postman
     return res.status(200).json({
@@ -236,9 +228,9 @@ exports.checkStatus = async (req, res) => {
         category_name: category?.name || "Game",
         category_image: category?.image_url,
         payment_method: transaction.payment_method,
-        price: basePrice,
-        fee: fee,
-        total_price: totalPrice,
+        price: basePrice, // Harga produk asli saat dibeli
+        fee: savedFee, // Fee asli dari database
+        total_price: totalPrice, // Total asli yang dibayar
         status: transaction.status,
         payment_status: transaction.payment_status,
         sn: transaction.sn || "-",
