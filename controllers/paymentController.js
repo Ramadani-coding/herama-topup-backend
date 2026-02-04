@@ -227,7 +227,7 @@ exports.checkNickname = async (req, res) => {
   const ref_id = `CHK-${Date.now()}`;
 
   try {
-    let nickname = "-";
+    let nickname = "Pastikan ID sudah benar";
     let isFinished = false;
     let attempts = 0;
 
