@@ -224,14 +224,13 @@ exports.handleNotification = async (req, res) => {
 
 exports.checkNickname = async (req, res) => {
   const { sku_code, customer_no } = req.body;
-  const ref_id = `CHK-${Date.now()}`; // Gunakan satu ref_id yang sama untuk pengecekan ini
+  const ref_id = `CHK-${Date.now()}`;
 
   try {
-    let nickname = "Transaksi Pending";
+    let nickname = "-";
     let isFinished = false;
     let attempts = 0;
 
-    // Lakukan pengulangan (Polling) maksimal 5 kali
     while (!isFinished && attempts < 5) {
       const response = await createDigiflazzTransaction(
         sku_code,
@@ -239,16 +238,31 @@ exports.checkNickname = async (req, res) => {
         ref_id,
       );
 
-      if (response.status.toLowerCase() === "sukses") {
-        // Jika sukses, ambil Nickname dari SN dan hentikan loop
+      const status = response.status.toLowerCase();
+
+      if (status === "sukses") {
         nickname = parseNickname(response.sn);
         isFinished = true;
-      } else if (response.status.toLowerCase() === "gagal") {
-        return res
-          .status(400)
-          .json({ success: false, message: response.message });
+      } else if (status === "gagal") {
+        // --- LOGIKA PESAN ERROR INFORMATIF ---
+        let msg = response.message || "Transaksi Gagal";
+
+        // Cek jika pesan dari Digiflazz mengindikasikan ID salah
+        // Biasanya berisi "Tujuan Salah", "Data tidak ditemukan", atau "RC 42"
+        if (
+          msg.toLowerCase().includes("tujuan salah") ||
+          msg.toLowerCase().includes("tidak ditemukan") ||
+          msg.toLowerCase().includes("invalid")
+        ) {
+          msg =
+            "ID atau Server tidak ditemukan. Silakan periksa kembali data akun Anda agar tidak terjadi kesalahan pengiriman.";
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: msg,
+        });
       } else {
-        // Jika masih pending, tunggu 2 detik sebelum coba lagi
         attempts++;
         await sleep(2000);
       }
