@@ -325,7 +325,9 @@ exports.getRecentTransactions = async (req, res) => {
     // 1. Ambil 10 transaksi terakhir dari tabel
     const { data: transactions, error: txError } = await supabase
       .from("transactions")
-      .select("created_at, ref_id, amount_sell, status, sku_code")
+      .select(
+        "created_at, ref_id, amount_sell, status, sku_code, payment_status",
+      )
       .order("created_at", { ascending: false })
       .limit(10);
 
@@ -354,7 +356,8 @@ exports.getRecentTransactions = async (req, res) => {
       order_id: maskInvoiceId(item.ref_id), // Sensor diaktifkan
       produk: productLookup[item.sku_code] || item.sku_code, // Pakai sku_code jika nama tidak ketemu
       harga: item.amount_sell,
-      status: item.status,
+      status_pesanan: item.status,
+      status_pembayaran: item.payment_status,
     }));
 
     return res.status(200).json({
