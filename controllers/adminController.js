@@ -1,3 +1,4 @@
+const adminService = require("../services/adminService");
 const digiflazzService = require("../services/digiflazzService");
 const supabase = require("../config/supabase");
 
@@ -161,5 +162,47 @@ exports.deleteProduct = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getStats = async (req, res) => {
+  try {
+    const stats = await adminService.getDashboardStats();
+    return res.json(stats);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Gagal mengambil statistik",
+      error: error.message,
+    });
+  }
+};
+
+exports.getTransactions = async (req, res) => {
+  try {
+    const transactions = await adminService.getAllTransactions();
+    return res.json(transactions);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getProducts = async (req, res) => {
+  try {
+    // Ambil status dari URL (?status=inactive)
+    const { page, limit, category_id, status } = req.query;
+
+    const result = await adminService.getAllProductsWithCategory(
+      page,
+      limit,
+      category_id,
+      status,
+    );
+
+    return res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
