@@ -6,13 +6,11 @@ exports.syncProducts = async (req, res) => {
   try {
     const digiflazzData = await digiflazzService.fetchPriceList();
 
-    // Log jika ada error respon dari Digiflazz (Bukan Array)
     if (!Array.isArray(digiflazzData)) {
       console.error(
         "DEBUG - Digiflazz Error Response:",
         JSON.stringify(digiflazzData, null, 2),
       );
-
       if (digiflazzData?.rc === "83") {
         return res
           .status(429)
@@ -21,9 +19,11 @@ exports.syncProducts = async (req, res) => {
       throw new Error(digiflazzData?.message || "Data bukan berbentuk Array.");
     }
 
+    // Ambil kategori dengan kolom terbaru
     const { data: currentCategories } = await supabase
       .from("categories")
-      .select("*");
+      .select("id, name, markup_type, markup_percent, markup_flat");
+
     const categoryMap = new Map(
       currentCategories?.map((c) => [c.name, c]) || [],
     );
@@ -35,6 +35,7 @@ exports.syncProducts = async (req, res) => {
       try {
         let category = categoryMap.get(item.brand);
 
+        // Logic jika kategori baru ditemukan
         if (!category) {
           const { data: newCat, error: catErr } = await supabase
             .from("categories")
@@ -43,8 +44,9 @@ exports.syncProducts = async (req, res) => {
                 name: item.brand,
                 slug: item.brand.toLowerCase().replace(/[^a-z0-9]/g, "-"),
                 input_type: "ID_ONLY",
-                markup_type: "flat",
-                markup_value: 2000,
+                markup_type: "flat", // Default awal
+                markup_percent: 0, // Kolom baru
+                markup_flat: 1500, // Kolom baru
               },
               { onConflict: "name" },
             )
@@ -56,13 +58,25 @@ exports.syncProducts = async (req, res) => {
           categoryMap.set(item.brand, category);
         }
 
-        // Kalkulasi Harga Jual
-        const cost = item.price;
-        const markupVal = parseFloat(category.markup_value);
-        let priceSell =
-          category.markup_type === "percent"
-            ? cost + cost * (markupVal / 100)
-            : cost + markupVal;
+        // --- MULAI PERHITUNGAN HARGA JUAL (HYBRID LOGIC) ---
+        const cost = Number(item.price);
+        const mPercent = parseFloat(category.markup_percent || 0);
+        const mFlat = parseFloat(category.markup_flat || 0);
+        const type = category.markup_type;
+
+        let priceSell = cost;
+
+        if (type === "percent") {
+          priceSell = cost * (1 + mPercent);
+        } else if (type === "flat") {
+          priceSell = cost + mFlat;
+        } else if (type === "hybrid") {
+          // Rumus Hybrid: Ambil yang tertinggi antara % dan Flat
+          const priceByPercent = cost * (1 + mPercent);
+          const priceByFlat = cost + mFlat;
+          priceSell = Math.max(priceByPercent, priceByFlat);
+        }
+        // --- SELESAI PERHITUNGAN ---
 
         const { error: prodErr } = await supabase.from("products").upsert(
           {
@@ -70,7 +84,7 @@ exports.syncProducts = async (req, res) => {
             sku_code: item.buyer_sku_code,
             product_name: item.product_name,
             price_cost: cost,
-            price_sell: Math.ceil(priceSell),
+            price_sell: Math.ceil(priceSell), // Pembulatan ke atas
             status:
               item.buyer_product_status && item.seller_product_status
                 ? "active"
@@ -82,13 +96,11 @@ exports.syncProducts = async (req, res) => {
         if (prodErr) throw prodErr;
         successCount++;
       } catch (err) {
-        // HANYA LOG JIKA TERJADI ERROR PADA PRODUK SPESIFIK
         console.error(`Gagal sync SKU ${item.buyer_sku_code}: ${err.message}`);
         failCount++;
       }
     }
 
-    // Response Ringkas
     res.json({
       success: true,
       message: `Sinkronisasi selesai. Sukses: ${successCount}, Gagal: ${failCount}`,
@@ -113,23 +125,39 @@ exports.getAllCategoriesAdmin = async (req, res) => {
   }
 };
 
-// 2. Update Detail Kategori (Gambar, Input Type, Markup)
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Mengambil data apa pun yang dikirim di body tanpa mendefinisikan satu per satu
     const updateData = req.body;
+
+    // 1. Hapus sampah kolom lama
+    delete updateData.markup_value;
+
+    // 2. FIX SERVER_LIST: JANGAN di-stringify
+    // Biarkan tetap dalam bentuk Array/Object agar Supabase menyimpannya sebagai JSONB asli
+    if (updateData.server_list && typeof updateData.server_list === "string") {
+      try {
+        updateData.server_list = JSON.parse(updateData.server_list);
+      } catch (e) {
+        // Jika gagal parse, biarkan apa adanya
+      }
+    }
+
+    // 3. Pastikan markup_type lowercase agar tidak kena Constraint Error
+    if (updateData.markup_type) {
+      updateData.markup_type = updateData.markup_type.toLowerCase();
+    }
 
     const { data, error } = await supabase
       .from("categories")
-      .update(updateData) // Hanya kolom yang ada di req.body yang di-update
+      .update(updateData)
       .eq("id", id)
       .select();
 
     if (error) throw error;
     res.json({ success: true, message: "Pembaruan berhasil", data });
   } catch (error) {
+    console.error("Update Error:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 };

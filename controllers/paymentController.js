@@ -47,6 +47,10 @@ exports.createPayment = async (req, res) => {
 
     if (method === "gopay") {
       fee = isMobile ? Math.ceil(basePrice * 0.02) : 0;
+    }
+    // TAMBAHAN: Logika Fee DANA 1.5%
+    else if (method === "dana") {
+      fee = Math.ceil(basePrice * 0.015);
     } else if (
       method.includes("va") ||
       method.includes("bank") ||
