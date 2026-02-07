@@ -78,11 +78,23 @@ exports.createPayment = async (req, res) => {
 
     const invoice = generateInvoice();
 
+    const frontendUrl = "https://store.herama.my.id";
+
     // 4. KONFIGURASI MIDTRANS
     let parameter = {
       transaction_details: { order_id: invoice, gross_amount: totalAmount },
       customer_details: { phone: phone_number },
       enabled_payments: [payment_method],
+
+      // --- INI ADALAH KODE YANG DITAMBAHKAN ---
+      // Midtrans akan otomatis menggabungkan URL ini dengan Order ID yang sedang diproses
+      callbacks: {
+        finish: `${frontendUrl}/transaction/${invoice}`,
+        error: `${frontendUrl}/transaction/${invoice}`,
+        pending: `${frontendUrl}/transaction/${invoice}`,
+      },
+      // ----------------------------------------
+
       item_details: [
         {
           id: sku_code,
