@@ -205,32 +205,157 @@ exports.getStats = async (req, res) => {
   }
 };
 
-exports.getTransactions = async (req, res) => {
-  try {
-    const transactions = await adminService.getAllTransactions();
-    return res.json(transactions);
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
-};
-
 exports.getProducts = async (req, res) => {
   try {
-    // Ambil status dari URL (?status=inactive)
-    const { page, limit, category_id, status } = req.query;
+    // 1. Parse parameter standar React Admin
+    const { filter, range, sort } = req.query;
 
-    const result = await adminService.getAllProductsWithCategory(
-      page,
-      limit,
-      category_id,
-      status,
+    const filterObj = filter ? JSON.parse(filter) : {};
+    const [from, to] = range ? JSON.parse(range) : [0, 9];
+    const sortArr = sort ? JSON.parse(sort) : ["product_name", "ASC"];
+
+    // 2. Panggil Service
+    const { products, total } = await adminService.getAllProductsWithCategory(
+      from,
+      to,
+      filterObj,
+      sortArr,
     );
+
+    // 3. SET HEADER CONTENT-RANGE (Kunci perbaikan pagination)
+    res.set("Access-Control-Expose-Headers", "Content-Range");
+    res.set("Content-Range", `products ${from}-${to}/${total}`);
 
     return res.json({
       success: true,
-      ...result,
+      products: products,
+      total: total, // Tetap kirim di body sebagai cadangan
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getProductDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Ambil data produk dan join dengan kategori
+    const { data, error } = await supabase
+      .from("products")
+      .select("*, categories(*)")
+      .eq("id", id)
+      .single();
+
+    if (error) throw error;
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Produk tidak ditemukan" });
+
+    // Format respons agar sesuai dengan yang diharapkan DataProvider
+    return res.json({
+      success: true,
+      product: {
+        ...data,
+        category_name: data.categories?.name || "No Category",
+      },
+    });
+  } catch (error) {
+    console.error("Error Detail Produk:", error.message);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const mapProductNames = async (transactions) => {
+  if (!transactions || transactions.length === 0) return [];
+
+  const { data: products } = await supabase
+    .from("products")
+    .select("sku_code, product_name");
+
+  const lookup = {};
+  products?.forEach((p) => (lookup[p.sku_code] = p.product_name));
+
+  return transactions.map((item) => {
+    // LOGIKA PENENTUAN STATUS BARU
+    let displayStatus = item.status; // Default pakai status asli
+
+    if (item.payment_status === "success" && item.status === "sukses") {
+      displayStatus = "Success";
+    } else if (item.payment_status === "pending" && item.status === "pending") {
+      displayStatus = "Waiting Payment";
+    } else if (item.payment_status === "expire" && item.status === "pending") {
+      displayStatus = "Cancel";
+    }
+
+    return {
+      ...item,
+      display_name: lookup[item.sku_code] || item.sku_code,
+      status_label: displayStatus,
+    };
+  });
+};
+
+exports.getList = async (req, res) => {
+  try {
+    // 1. Ambil filter, range, dan sort dari URL yang dikirim browser
+    let { filter, range, sort } = req.query;
+
+    // Parse JSON string menjadi Object agar bisa dibaca
+    const filterObj = filter ? JSON.parse(filter) : {};
+    const [from, to] = range ? JSON.parse(range) : [0, 9];
+    const [field, order] = sort ? JSON.parse(sort) : ["created_at", "DESC"];
+
+    // 2. Buat query dasar ke Supabase
+    let query = supabase.from("transactions").select("*", { count: "exact" });
+
+    // 3. LOGIKA SEARCH: Inilah kuncinya!
+    if (filterObj.q) {
+      // Mencari di kolom ref_id, customer_no, atau sku_code
+      query = query.or(
+        `ref_id.ilike.%${filterObj.q}%,customer_no.ilike.%${filterObj.q}%,sku_code.ilike.%${filterObj.q}%`,
+      );
+    }
+
+    // 4. Jalankan Query dengan Pagination dan Sorting
+    const { data, count, error } = await query
+      .range(from, to)
+      .order(field, { ascending: order === "ASC" });
+
+    if (error) throw error;
+
+    // Tambahkan nama produk (display_name) seperti yang sudah kita buat sebelumnya
+    const result = await mapProductNames(data);
+
+    // 5. Update Header Content-Range (Harus pakai 'count' asli dari hasil filter)
+    res.set("Access-Control-Expose-Headers", "Content-Range");
+    res.set("Content-Range", `transactions ${from}-${to}/${count}`);
+
+    return res.json(result);
+  } catch (err) {
+    console.error("Error API:", err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// 2. TAMBAHKAN FUNGSI INI: Untuk mengambil satu data detail
+exports.getTransactionById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Kamu bisa menggunakan service yang sudah ada lalu memfilternya,
+    // atau buat fungsi baru di adminService yang pakai .maybeSingle() dari Supabase
+    const allTransactions = await adminService.getAllTransactions();
+    const transaction = allTransactions.find((t) => t.id === id);
+
+    if (!transaction) {
+      return res.status(404).json({ message: "Transaksi tidak ditemukan" });
+    }
+
+    // Pastikan mengembalikan OBJEK {}, bukan ARRAY []
+    return res.json(transaction);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 };

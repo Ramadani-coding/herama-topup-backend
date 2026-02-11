@@ -1,18 +1,19 @@
 const express = require("express");
 const router = express.Router();
 const adminCtrl = require("../controllers/adminController");
+const { verifyAdmin } = require("../middleware/authMiddleware");
 
-// Integrasi Digiflazz
-router.post("/sync-products", adminCtrl.syncProducts);
+router.post("/products/sync", verifyAdmin, adminCtrl.syncProducts);
 
-// Manajemen Kategori Manual
 router.get("/categories", adminCtrl.getAllCategoriesAdmin);
 router.patch("/categories/:id", adminCtrl.updateCategory);
-router.delete("/products/:id", adminCtrl.deleteProduct);
 router.delete("/categories/:id", adminCtrl.deleteCategory);
 
-router.get("/stats", adminCtrl.getStats);
-router.get("/transactions", adminCtrl.getTransactions);
-router.get("/products", adminCtrl.getProducts);
+router.get("/products", verifyAdmin, adminCtrl.getProducts);
+router.get("/products/:id", verifyAdmin, adminCtrl.getProductDetail);
+router.delete("/products/:id", verifyAdmin, adminCtrl.deleteProduct);
+
+router.get("/transactions", verifyAdmin, adminCtrl.getList);
+router.get("/transactions/:id", verifyAdmin, adminCtrl.getTransactionById);
 
 module.exports = router;

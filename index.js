@@ -25,6 +25,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1/public", require("./routes/publicRoutes"));
 app.use("/api/v1/admin", require("./routes/adminRoutes"));
 app.use("/api/v1/payment", require("./routes/paymentRoutes"));
+app.use("/api/v1/auth", require("./routes/authRoutes"));
 
 app.get("/test-db", async (req, res) => {
   try {
