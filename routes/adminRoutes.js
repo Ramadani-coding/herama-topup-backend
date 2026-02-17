@@ -3,6 +3,8 @@ const router = express.Router();
 const adminCtrl = require("../controllers/adminController");
 const { verifyAdmin } = require("../middleware/authMiddleware");
 
+router.get("/herama-analytics/:id", adminCtrl.getDashboardStats);
+
 router.post("/products/sync", verifyAdmin, adminCtrl.syncProducts);
 
 router.get("/categories", verifyAdmin, adminCtrl.getAllCategoriesAdmin);

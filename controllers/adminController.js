@@ -1,6 +1,7 @@
 const adminService = require("../services/adminService");
 const digiflazzService = require("../services/digiflazzService");
 const supabase = require("../config/supabase");
+const { getDigiflazzBalance } = require("../utils/getDigiflazzBalance");
 
 exports.syncProducts = async (req, res) => {
   try {
@@ -385,7 +386,6 @@ exports.getList = async (req, res) => {
   }
 };
 
-// 2. TAMBAHKAN FUNGSI INI: Untuk mengambil satu data detail
 exports.getTransactionById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -403,5 +403,127 @@ exports.getTransactionById = async (req, res) => {
     return res.json(transaction);
   } catch (error) {
     return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getDashboardStats = async (req, res) => {
+  try {
+    // 1. Ambil Saldo Digiflazz secara Real-time
+    const balance = await getDigiflazzBalance();
+
+    // 2. Ambil data transaksi dari Supabase
+    const { data: transactions, error: transError } = await supabase
+      .from("transactions")
+      .select("amount_sell, amount_cost, status");
+
+    if (transError) throw transError;
+
+    // 3. Hitung Inventaris (Total Produk & Kategori)
+    const { count: totalProducts } = await supabase
+      .from("products")
+      .select("*", { count: "exact", head: true });
+
+    const { count: totalCategories } = await supabase
+      .from("categories")
+      .select("*", { count: "exact", head: true });
+
+    // 4. Logika Kalkulasi Keuangan & Pesanan
+    const totalOrders = transactions.length;
+    const successOrders = transactions.filter(
+      (t) => t.status === "sukses" || t.status === "Success",
+    );
+    const totalPaid = successOrders.length;
+
+    const grossRevenue = successOrders.reduce(
+      (sum, t) => sum + (t.amount_sell || 0),
+      0,
+    );
+    const totalCost = successOrders.reduce(
+      (sum, t) => sum + (t.amount_cost || 0),
+      0,
+    );
+    const netProfit = grossRevenue - totalCost;
+
+    // Helper format mata uang (Internal agar aman dari ReferenceError)
+    const formatIDR = (val) =>
+      new Intl.NumberFormat("id-ID", {
+        style: "currency",
+        currency: "IDR",
+        maximumFractionDigits: 0,
+      }).format(val);
+
+    // 5. Kirim data ke frontend dengan struktur yang mendukung UI menarik
+    res.json({
+      success: true,
+      data: {
+        id: "current", // Wajib untuk React Admin
+
+        // INFORMASI SALDO DIGIFLAZZ (Data Baru)
+        digiflazzBalance: formatIDR(balance),
+
+        // STATISTIK TRANSAKSI
+        totalOrders: totalOrders.toLocaleString("id-ID"),
+        totalPaid: totalPaid.toLocaleString("id-ID"),
+        paidRatio: `${totalOrders > 0 ? ((totalPaid / totalOrders) * 100).toFixed(0) : 0}%`,
+        unpaidOrders: (totalOrders - totalPaid).toLocaleString("id-ID"),
+
+        // INVENTORY SUMMARY
+        totalProducts: (totalProducts || 0).toLocaleString("id-ID"),
+        totalCategories: (totalCategories || 0).toLocaleString("id-ID"),
+
+        // FINANCIAL INSIGHTS
+        grossRevenue: formatIDR(grossRevenue),
+        netRevenue: formatIDR(grossRevenue),
+        netProfit: formatIDR(netProfit),
+
+        // Placeholder untuk produk terlaris
+        bestSelling: [],
+      },
+    });
+  } catch (error) {
+    console.error("Dashboard Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getBestSellingProducts = async (req, res) => {
+  try {
+    const { data: transactions, error } = await supabase
+      .from("transactions")
+      .select("display_name, amount_sell, amount_cost, status");
+
+    if (error) throw error;
+
+    // Kelompokkan data berdasarkan nama produk
+    const productMap = transactions.reduce((acc, t) => {
+      const name = t.display_name || "Unknown Product";
+      if (!acc[name]) {
+        acc[name] = { name, orders: 0, paid: 0, revenue: 0 };
+      }
+      acc[name].orders += 1;
+      if (t.status === "sukses" || t.status === "Success") {
+        acc[name].paid += 1;
+        acc[name].revenue += t.amount_sell - t.amount_cost;
+      }
+      return acc;
+    }, {});
+
+    // Ubah ke array dan urutkan berdasarkan revenue tertinggi
+    const bestSelling = Object.values(productMap)
+      .map((p) => ({
+        ...p,
+        paidRatio: p.orders > 0 ? Math.round((p.paid / p.orders) * 100) : 0,
+        formattedRevenue: new Intl.NumberFormat("id-ID", {
+          style: "currency",
+          currency: "IDR",
+          maximumFractionDigits: 0,
+        }).format(p.revenue),
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5); // Ambil Top 5
+
+    res.json({ success: true, data: bestSelling });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
