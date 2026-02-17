@@ -111,17 +111,57 @@ exports.syncProducts = async (req, res) => {
 };
 
 // 1. Ambil Semua Kategori (Termasuk yang tidak aktif untuk Admin)
+// adminController.js
+
 exports.getAllCategoriesAdmin = async (req, res) => {
   try {
+    const { sort, range } = req.query;
+
+    // 1. Parse parameter dari React Admin
+    // Format range: "[0, 4]" (untuk 5 data pertama)
+    const [from, to] = range ? JSON.parse(range) : [0, 9];
+    // Format sort: "[\"name\", \"ASC\"]"
+    const [field, order] = sort ? JSON.parse(sort) : ["name", "ASC"];
+
+    // 2. Query ke Supabase dengan pagination dan sorting
+    const { data, error, count } = await supabase
+      .from("categories")
+      .select("*", { count: "exact" }) // 'exact' untuk mendapatkan total baris di database
+      .order(field, { ascending: order === "ASC" })
+      .range(from, to);
+
+    if (error) throw error;
+
+    // 3. Penting: Expose Content-Range header agar frontend bisa membaca total data
+    res.set("Access-Control-Expose-Headers", "Content-Range");
+    res.set("Content-Range", `categories ${from}-${to}/${count}`);
+
+    // Kirim response dengan total count di dalamnya
+    res.json({ success: true, data, total: count });
+  } catch (error) {
+    console.error("Fetch Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getCategoryById = async (req, res) => {
+  try {
+    const { id } = req.params;
     const { data, error } = await supabase
       .from("categories")
       .select("*")
-      .order("name", { ascending: true });
+      .eq("id", id)
+      .single(); // Ambil hanya satu data
 
     if (error) throw error;
+
+    // Pastikan format response konsisten dengan getAllCategoriesAdmin
     res.json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Get Category Error:", error.message);
+    res
+      .status(404)
+      .json({ success: false, message: "Kategori tidak ditemukan" });
   }
 };
 
@@ -155,7 +195,13 @@ exports.updateCategory = async (req, res) => {
       .select();
 
     if (error) throw error;
-    res.json({ success: true, message: "Pembaruan berhasil", data });
+
+    // FIX: Kirim data[0] agar menjadi objek tunggal, bukan array
+    res.json({
+      success: true,
+      message: "Pembaruan berhasil",
+      data: data[0], // Ambil index ke-0
+    });
   } catch (error) {
     console.error("Update Error:", error.message);
     res.status(500).json({ success: false, message: error.message });

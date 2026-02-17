@@ -5,9 +5,10 @@ const { verifyAdmin } = require("../middleware/authMiddleware");
 
 router.post("/products/sync", verifyAdmin, adminCtrl.syncProducts);
 
-router.get("/categories", adminCtrl.getAllCategoriesAdmin);
-router.patch("/categories/:id", adminCtrl.updateCategory);
-router.delete("/categories/:id", adminCtrl.deleteCategory);
+router.get("/categories", verifyAdmin, adminCtrl.getAllCategoriesAdmin);
+router.get("/categories/:id", verifyAdmin, adminCtrl.getCategoryById);
+router.patch("/categories/:id", verifyAdmin, adminCtrl.updateCategory);
+router.delete("/categories/:id", verifyAdmin, adminCtrl.deleteCategory);
 
 router.get("/products", verifyAdmin, adminCtrl.getProducts);
 router.get("/products/:id", verifyAdmin, adminCtrl.getProductDetail);
